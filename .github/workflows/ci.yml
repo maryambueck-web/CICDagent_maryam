@@ -22,7 +22,7 @@ jobs:
       - name: Validate Gemini config
         run: bash tests/test_gemini_config.sh
 
-  security:
+  zizmor:
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -31,7 +31,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - name: Scan GitHub Actions workflows
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
@@ -39,5 +38,33 @@ jobs:
           advanced-security: false
           annotations: true
           online-audits: false
+
+  trufflehog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Scan repository history for secrets
         uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
+        with:
+          version: 3.99.2
+
+  # Required check: fails if either scanner fails, errors, is cancelled or is skipped.
+  security:
+    if: ${{ always() }}
+    needs: [zizmor, trufflehog]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require both scanners to succeed
+        env:
+          ZIZMOR: ${{ needs.zizmor.result }}
+          TRUFFLEHOG: ${{ needs.trufflehog.result }}
+        run: |
+          echo "zizmor=${ZIZMOR} trufflehog=${TRUFFLEHOG}"
+          [ "${ZIZMOR}" = success ] && [ "${TRUFFLEHOG}" = success ]
