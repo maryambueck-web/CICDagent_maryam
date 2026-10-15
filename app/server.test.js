@@ -10,7 +10,9 @@ function get(path) {
         .get({ port: server.address().port, path }, (res) => {
           let body = "";
           res.on("data", (c) => (body += c));
-          res.on("end", () => server.close(() => resolve({ status: res.statusCode, body })));
+          res.on("end", () =>
+            server.close(() => resolve({ status: res.statusCode, headers: res.headers, body })),
+          );
         })
         .on("error", reject);
     });
@@ -21,6 +23,13 @@ test("health endpoint returns ok", async () => {
   const r = await get("/healthz");
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body, "ok");
+});
+
+test("ready endpoint returns exactly {\"status\":\"ok\"} as JSON with 200", async () => {
+  const r = await get("/ready");
+  assert.strictEqual(r.status, 200);
+  assert.match(r.headers["content-type"], /^application\/json/);
+  assert.strictEqual(r.body, '{"status":"ok"}');
 });
 
 test("root returns app metadata", async () => {
