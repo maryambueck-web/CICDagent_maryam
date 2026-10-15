@@ -1,6 +1,8 @@
 # Production deployment pipeline. Runs only through an approval-required Cloud Build trigger on main,
 # as the dedicated deployer service account. Deploys the commit being built (COMMIT_SHA) as a no-traffic candidate revision,
 # verifies the candidate through its tagged URL, and only then promotes it to 100% of traffic.
+# The substitutions below are the demo defaults. For another project or company, override them
+# on the trigger (_REGION, _SERVICE, _DEPLOYER, _IMAGE, _READY_PATH); the project comes from ${PROJECT_ID}.
 substitutions:
   _REGION: us-east1
   _SERVICE: cicdagent-sample-demo

@@ -9,7 +9,7 @@
 
 ## AI review behavior
 
-Tested on disposable PR #10 (https://github.com/maryambueck-web/CICDagent_maryam/pull/10, closed unmerged): both reviewers reviewed the first commit; after a second push only Copilot reviewed again.
+Tested on disposable PR #10 (PR #10, closed unmerged): both reviewers reviewed the first commit; after a second push only Copilot reviewed again.
 
 - **Gemini** reviews new PRs automatically. It does not re-review pushes; comment `/gemini review` to request a fresh Gemini review manually.
 - **Copilot** reviews new PRs and every subsequent push automatically, through the repository ruleset "Copilot review on every push". The ruleset excludes draft PRs.
@@ -29,18 +29,12 @@ Tested on disposable PR #10 (https://github.com/maryambueck-web/CICDagent_maryam
 Status: a **functioning demo pilot**. It deploys a sample app to a separate demo Cloud Run service, not to production.
 
 - **GitHub side stays disabled:** `.github/workflows/deploy.yml` is manual-only and guarded by the repo variable `DEPLOY_ENABLED` (unset). No GitHub-side GCP credentials exist.
+- **Adapting it:** all names are Cloud Build substitutions in `cloudbuild.yaml` (`_REGION`, `_SERVICE`, `_DEPLOYER`, `_IMAGE`, `_READY_PATH`); override them on the trigger. The GitHub deploy workflow reads `GCP_CLOUD_RUN_SERVICE`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT` from repo variables and stays disabled until `DEPLOY_ENABLED` is `true`.
 - **Why Cloud Build approval:** GitHub's `production` environment cannot require reviewers on this private free-plan repo (the API rejects it).
 - **Pipeline (`cloudbuild.yaml`):** private GitHub connection (Developer Connect) -> approval-required trigger on `main` -> app tests -> `npm audit` -> container build -> Artifact Registry (tagged with the commit SHA) -> Cloud Run **candidate** revision (`--no-traffic`, tagged `candidate`, private) -> authenticated check of the candidate's tagged URL (`/ready` returns 200 with exactly `{"status":"ok"}`, and `/` reports a version equal to the commit SHA) -> promote to 100% only if that passes -> same check on the live service. `scripts/check-ready.sh` is the shared check and is itself tested.
-- **Identities:** a dedicated deployer service account (log writer, Artifact Registry writer on one repo, `run.developer` and `run.invoker` on the demo service, `serviceAccountUser` on the runtime account) and a runtime service account with no roles.
+- **Identities:** a dedicated deployer service account (for example `cicd-deployer`; log writer, Artifact Registry writer on one repo, `run.developer` and `run.invoker` on the demo service, `serviceAccountUser` on the runtime account) and a runtime service account with no roles.
 
-Evidence (project `project-cd16ff87-2947-4d1f-985`, us-east1):
-
-- **Rejection:** build `b81e5c74-70b7-403c-9340-379ef6b8da71` on `383e340` stayed `PENDING`, was rejected, ended `CANCELLED` and never started. Nothing was pushed or deployed; the service stayed on revision `00001`.
-- **Approval (candidate flow):** build `7f68ed87-37ac-4afd-8357-89f4a00aeb16` on `14dcaf94419a06caf106d6c5aed2bbc27bf8454f` was `PENDING` with no step started, then approved. All eight steps succeeded: the candidate passed its check at `https://candidate---cicdagent-sample-demo-wbt3lytofq-ue.a.run.app`, then revision `cicdagent-sample-demo-00006-qak` was promoted to 100% and passed the live check.
-- **Failed candidate is not promoted:** build `fb9aead8-3532-45b9-9d80-8ee07ea95957` (same commit, ready path overridden to a nonexistent path through a trigger substitution, no code change) was approved. The candidate revision `00005-fir` was created with 0% traffic, `verify-candidate` failed, `promote` never ran, and live traffic stayed 100% on `00004-vr9`.
-- **Deployer cannot approve:** during pending build `55004aec-b49e-4677-8ce6-bb4afd2800f1`, an approval attempt as `cicd-deployer` returned `403 PERMISSION_DENIED` and the build stayed `PENDING`. That build then failed closed at the `test` step (a slim-image `curl` gap, fixed in #16) before anything was deployed.
-- **Earlier run:** build `12d61fe7-1ea6-4350-8e5d-d061b9dad980` (PR #14) used the earlier direct deploy with a post-switch check.
-- **Earlier finding:** the first health check used `/healthz`, which Cloud Run's front end answers with its own 404 before the app sees it, so `/ready` is used instead (PR #14).
+Evidence from the demo run (build IDs, commits, revisions and the project it ran in) is recorded in [docs/demo-evidence.md](docs/demo-evidence.md). Summary: a rejected build never started; an approved build deployed a no-traffic candidate, verified it, then promoted it; a failing candidate was not promoted; and the deployer identity could not approve builds.
 
 Application-specific tests (`app/server.test.js`) cover the `/ready` contract, query-string handling, the version reported, Dockerfile policy (non-root, pinned base major, no `:latest`), no unexpected runtime dependencies, and the readiness script's pass and fail paths.
 
