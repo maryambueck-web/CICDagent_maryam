@@ -3,6 +3,7 @@
 substitutions:
   _REGION: us-east1
   _SERVICE: cicdagent-sample-demo
+  _DEPLOYER: cicd-deployer@${PROJECT_ID}.iam.gserviceaccount.com
   _IMAGE: us-east1-docker.pkg.dev/${PROJECT_ID}/cicdagent-images/sample
 
 options:
@@ -44,7 +45,7 @@ steps:
       - |
         set -euo pipefail
         url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
-        token=$$(gcloud auth print-identity-token --audiences="$$url")
+        token=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url")
         for i in 1 2 3 4 5 6; do
           code=$$(curl -s -o /tmp/ready.body -w '%{http_code}' -H "Authorization: Bearer $$token" "$$url/ready" || true)
           if [ "$$code" = 200 ] && [ "$$(cat /tmp/ready.body)" = '{"status":"ok"}' ]; then
