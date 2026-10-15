@@ -73,7 +73,7 @@ steps:
         cand=$$(echo "$$desc" | python3 -c "import sys,json; t='$$tag'; print(next(x['url'] for x in json.load(sys.stdin)['status']['traffic'] if x.get('tag')==t))")
         echo "candidate url: $$cand"
         # The tag must still point at the revision recorded by the deploy step, running the image built here.
-        gcloud run revisions describe "$$rev" --region=${_REGION} --format='value(spec.containers[0].image)' | grep -qx "${_IMAGE}:${COMMIT_SHA}"
+        gcloud run revisions describe "$$rev" --region=${_REGION} --format='value(spec.containers[0].image)' | grep -Eqx "${_IMAGE}:${COMMIT_SHA}(@sha256:[0-9a-f]+)?"
         echo "$$desc" | python3 -c "import sys,json; t='$$tag'; r='$$rev'; assert next(x['revisionName'] for x in json.load(sys.stdin)['status']['traffic'] if x.get('tag')==t)==r"
         TOKEN=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url") \
           bash scripts/check-ready.sh "$$cand" "${_READY_PATH}" "${COMMIT_SHA}"
