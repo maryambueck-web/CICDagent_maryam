@@ -1,8 +1,10 @@
 # Production deployment pipeline. Runs only through an approval-required Cloud Build trigger on main,
-# as the dedicated deployer service account. Deploys the commit being built (COMMIT_SHA) to Cloud Run.
+# as the dedicated deployer service account. Deploys the commit being built (COMMIT_SHA) as a no-traffic candidate revision,
+# verifies the candidate through its tagged URL, and only then promotes it to 100% of traffic.
 substitutions:
   _REGION: us-east1
   _SERVICE: cicdagent-sample-demo
+  _READY_PATH: /ready
   _DEPLOYER: cicd-deployer@${PROJECT_ID}.iam.gserviceaccount.com
   _IMAGE: us-east1-docker.pkg.dev/${PROJECT_ID}/cicdagent-images/sample
 
@@ -16,6 +18,12 @@ steps:
     entrypoint: npm
     args: ["test"]
 
+  - id: audit
+    name: node:22-slim
+    dir: app
+    entrypoint: npm
+    args: ["audit", "--audit-level=high"]
+
   - id: build
     name: gcr.io/cloud-builders/docker
     args: ["build", "-t", "${_IMAGE}:${COMMIT_SHA}", "app"]
@@ -24,7 +32,7 @@ steps:
     name: gcr.io/cloud-builders/docker
     args: ["push", "${_IMAGE}:${COMMIT_SHA}"]
 
-  - id: deploy
+  - id: deploy-candidate
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
@@ -35,9 +43,11 @@ steps:
       - --region=${_REGION}
       - --set-env-vars=APP_VERSION=${COMMIT_SHA}
       - --no-allow-unauthenticated
+      - --no-traffic
+      - --tag=candidate
       - --quiet
 
-  - id: health-check
+  - id: verify-candidate
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     args:
@@ -45,17 +55,28 @@ steps:
       - |
         set -euo pipefail
         url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
-        token=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url")
-        for i in 1 2 3 4 5 6; do
-          code=$$(curl -s -o /tmp/ready.body -w '%{http_code}' -H "Authorization: Bearer $$token" "$$url/ready" || true)
-          if [ "$$code" = 200 ] && [ "$$(cat /tmp/ready.body)" = '{"status":"ok"}' ]; then
-            echo "ready ok"
-            curl -sf -H "Authorization: Bearer $$token" "$$url/" | grep -q "\"version\":\"${COMMIT_SHA}\""
-            echo "version ${COMMIT_SHA} confirmed"
-            exit 0
-          fi
-          echo "attempt $$i: status=$$code body=$$(head -c 80 /tmp/ready.body)" >&2
-          sleep 5
-        done
-        echo "readiness check failed" >&2
-        exit 1
+        cand=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format=json | python3 -c "import sys,json; print(next(t['url'] for t in json.load(sys.stdin)['status']['traffic'] if t.get('tag')=='candidate'))")
+        echo "candidate url: $$cand"
+        TOKEN=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url") \
+          bash scripts/check-ready.sh "$$cand" "${_READY_PATH}" "${COMMIT_SHA}"
+
+  - id: promote
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        gcloud run services update-traffic ${_SERVICE} --region=${_REGION} --to-tags=candidate=100 --quiet
+        gcloud run services update-traffic ${_SERVICE} --region=${_REGION} --remove-tags=candidate --quiet
+
+  - id: verify-live
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
+        TOKEN=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url") \
+          bash scripts/check-ready.sh "$$url" "${_READY_PATH}" "${COMMIT_SHA}"

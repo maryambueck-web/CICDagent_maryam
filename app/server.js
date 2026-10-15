@@ -1,11 +1,12 @@
 const http = require("node:http");
 
 function handler(req, res) {
-  if (req.url === "/ready") {
+  const path = new URL(req.url, "http://localhost").pathname;
+  if (path === "/ready") {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ status: "ok" }));
   }
-  if (req.url === "/healthz") {
+  if (path === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain" });
     return res.end("ok");
   }

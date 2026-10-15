@@ -36,6 +36,9 @@ jobs:
       - name: Run application tests
         working-directory: app
         run: npm test
+      - name: Audit dependencies (fails on high or critical)
+        working-directory: app
+        run: npm audit --audit-level=high
 
   zizmor:
     runs-on: ubuntu-latest
