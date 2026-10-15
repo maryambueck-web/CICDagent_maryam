@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -18,6 +19,8 @@ jobs:
           persist-credentials: false
       - name: Run review-guidance tests
         run: bash tests/test_review_guidance.sh
+      - name: Validate Gemini config
+        run: bash tests/test_gemini_config.sh
 
   security:
     runs-on: ubuntu-latest
