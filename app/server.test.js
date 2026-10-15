@@ -3,7 +3,7 @@ const assert = require("node:assert");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFile } = require("node:child_process");
+const { execFile, spawnSync } = require("node:child_process");
 const { handler } = require("./server");
 
 function get(path, env = {}) {
@@ -91,7 +91,10 @@ function runCheck(port, urlPath, version) {
   });
 }
 
-test("check-ready.sh passes for the right version and fails for a wrong version or path", async () => {
+const hasCurl = spawnSync("curl", ["--version"]).status === 0;
+
+// The slim Cloud Build test image has no curl; this test always runs in the required GitHub check.
+test("check-ready.sh passes for the right version and fails for a wrong version or path", { skip: !hasCurl && "curl not installed" }, async () => {
   const server = http.createServer(handler);
   await new Promise((r) => server.listen(0, r));
   process.env.APP_VERSION = "v1";
