@@ -1,0 +1,32 @@
+name: Gemini re-review
+
+# .gemini/config.yaml only supports a review on pull_request_opened, so new commits
+# are not reviewed automatically. This asks Gemini Code Assist for a fresh review
+# on every push to an open, non-draft PR from this repository.
+# No checkout and no PR-controlled input is used. Advisory only; not a required check.
+
+on:
+  pull_request:
+    types: [synchronize, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: gemini-rereview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request-review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment /gemini review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body "/gemini review"
