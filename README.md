@@ -14,13 +14,13 @@ Tested on disposable PR #10 (https://github.com/maryambueck-web/CICDagent_maryam
 - **Gemini** reviews new PRs automatically. It does not re-review pushes; comment `/gemini review` to request a fresh Gemini review manually.
 - **Copilot** reviews new PRs and every subsequent push automatically, through the repository ruleset "Copilot review on every push". The ruleset excludes draft PRs.
 - **AI feedback is advisory.** Neither reviewer is a required check.
-- **Merge eligibility** is controlled by the required `tests` and `security` checks.
+- **Merge eligibility** is controlled by the required `tests`, `security` and `app-tests` checks.
 
 ## Known gaps
 
 - **Gemini re-review on push:** not automatic. A workflow commenting `/gemini review` was tried and Gemini ignored comments posted by `github-actions[bot]`, so it was not adopted.
 - **Human approval:** not yet configured. There are no required PR reviews or CODEOWNERS; merging needs only green checks.
-- **Production deployment gates:** not yet configured. No deployment workflow, environments, or approval gates exist. Add protected environments with required reviewers before deploying.
+- **Production deployment gates:** not yet configured. See "Production deployment (disabled)" below.
 - **Scanner limits:** zizmor runs with `online-audits: false`; the TruffleHog container image tag is not digest-pinned.
 
 ## Production deployment (disabled)
