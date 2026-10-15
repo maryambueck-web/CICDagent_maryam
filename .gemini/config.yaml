@@ -16,3 +16,5 @@ ignore_patterns:
   - "**/*.key"
   - "**/node_modules/**"
   - "**/dist/**"
+
+broken: [
