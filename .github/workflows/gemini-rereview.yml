@@ -3,7 +3,7 @@ name: Gemini re-review
 # .gemini/config.yaml only supports a review on pull_request_opened, so new commits
 # are not reviewed automatically. This asks Gemini Code Assist for a fresh review
 # on every push to an open, non-draft PR from this repository.
-# No checkout and no PR-controlled input is used. Advisory only; not a required check.
+# No checkout and no PR-controlled input is used (the PR number comes from the event payload). Advisory only; not a required check.
 
 on:
   pull_request:
