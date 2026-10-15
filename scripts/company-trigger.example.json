@@ -2,19 +2,24 @@
   "name": "deploy-staging-main",
   "description": "Approval-required staging deployment of main (create only after prerequisites are met)",
   "disabled": true,
-  "approvalConfig": { "approvalRequired": true },
+  "approvalConfig": {
+    "approvalRequired": true
+  },
   "serviceAccount": "projects/cicdagent/serviceAccounts/cicd-deployer@cicdagent.iam.gserviceaccount.com",
   "filename": "cloudbuild.yaml",
   "developerConnectEventConfig": {
     "gitRepositoryLink": "projects/cicdagent/locations/europe-west1/connections/<CONNECTION>/gitRepositoryLinks/<LINK>",
     "gitRepositoryLinkType": "GITHUB",
-    "push": { "branch": "^main$" }
+    "push": {
+      "branch": "^main$"
+    }
   },
   "substitutions": {
     "_REGION": "europe-west1",
     "_SERVICE": "cicdagent-sample-staging",
     "_DEPLOYER": "cicd-deployer@cicdagent.iam.gserviceaccount.com",
     "_IMAGE": "europe-west1-docker.pkg.dev/cicdagent/cicdagent-images/sample",
-    "_READY_PATH": "/ready"
+    "_READY_PATH": "/ready",
+    "_RUNTIME": "cicd-runtime@cicdagent.iam.gserviceaccount.com"
   }
 }

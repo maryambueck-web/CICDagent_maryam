@@ -2,12 +2,13 @@
 # as the dedicated deployer service account. Deploys the commit being built (COMMIT_SHA) as a no-traffic candidate revision,
 # verifies the candidate through its tagged URL, and only then promotes it to 100% of traffic.
 # The substitutions below are the demo defaults. For another project or company, override them
-# on the trigger (_REGION, _SERVICE, _DEPLOYER, _IMAGE, _READY_PATH); the project comes from ${PROJECT_ID}.
+# on the trigger (_REGION, _SERVICE, _DEPLOYER, _RUNTIME, _IMAGE, _READY_PATH); the project comes from ${PROJECT_ID}.
 substitutions:
   _REGION: us-east1
   _SERVICE: cicdagent-sample-demo
   _READY_PATH: /ready
   _DEPLOYER: cicd-deployer@${PROJECT_ID}.iam.gserviceaccount.com
+  _RUNTIME: cicd-demo-runtime@${PROJECT_ID}.iam.gserviceaccount.com
   _IMAGE: us-east1-docker.pkg.dev/${PROJECT_ID}/cicdagent-images/sample
 
 options:
@@ -36,18 +37,27 @@ steps:
 
   - id: deploy-candidate
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_SERVICE}
-      - --image=${_IMAGE}:${COMMIT_SHA}
-      - --region=${_REGION}
-      - --set-env-vars=APP_VERSION=${COMMIT_SHA}
-      - --no-allow-unauthenticated
-      - --no-traffic
-      - --tag=candidate
-      - --quiet
+      - -c
+      - |
+        set -euo pipefail
+        # Unique per build (a retry of the same commit gets its own tag); short enough for the tag URL host label.
+        tag="c$$(echo "${BUILD_ID}" | tr -d - | cut -c1-12)"
+        echo "$$tag" > /workspace/candidate_tag
+        gcloud run deploy ${_SERVICE} \
+          --image=${_IMAGE}:${COMMIT_SHA} \
+          --region=${_REGION} \
+          --service-account=${_RUNTIME} \
+          --set-env-vars=APP_VERSION=${COMMIT_SHA} \
+          --no-allow-unauthenticated \
+          --no-traffic \
+          --tag="$$tag" \
+          --quiet
+        # Record the exact revision behind the tag so that revision, and no other, is verified and promoted.
+        rev=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format=json | python3 -c "import sys,json; t='$$tag'; print(next(x['revisionName'] for x in json.load(sys.stdin)['status']['traffic'] if x.get('tag')==t))")
+        echo "$$rev" > /workspace/candidate_revision
+        echo "candidate revision: $$rev (tag $$tag)"
 
   - id: verify-candidate
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
@@ -56,9 +66,15 @@ steps:
       - -c
       - |
         set -euo pipefail
-        url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
-        cand=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format=json | python3 -c "import sys,json; print(next(t['url'] for t in json.load(sys.stdin)['status']['traffic'] if t.get('tag')=='candidate'))")
+        tag=$$(cat /workspace/candidate_tag)
+        rev=$$(cat /workspace/candidate_revision)
+        desc=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format=json)
+        url=$$(echo "$$desc" | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['url'])")
+        cand=$$(echo "$$desc" | python3 -c "import sys,json; t='$$tag'; print(next(x['url'] for x in json.load(sys.stdin)['status']['traffic'] if x.get('tag')==t))")
         echo "candidate url: $$cand"
+        # The tag must still point at the revision recorded by the deploy step, running the image built here.
+        gcloud run revisions describe "$$rev" --region=${_REGION} --format='value(spec.containers[0].image)' | grep -qx "${_IMAGE}:${COMMIT_SHA}"
+        echo "$$desc" | python3 -c "import sys,json; t='$$tag'; r='$$rev'; assert next(x['revisionName'] for x in json.load(sys.stdin)['status']['traffic'] if x.get('tag')==t)==r"
         TOKEN=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url") \
           bash scripts/check-ready.sh "$$cand" "${_READY_PATH}" "${COMMIT_SHA}"
 
@@ -69,8 +85,11 @@ steps:
       - -c
       - |
         set -euo pipefail
-        gcloud run services update-traffic ${_SERVICE} --region=${_REGION} --to-tags=candidate=100 --quiet
-        gcloud run services update-traffic ${_SERVICE} --region=${_REGION} --remove-tags=candidate --quiet
+        tag=$$(cat /workspace/candidate_tag)
+        rev=$$(cat /workspace/candidate_revision)
+        gcloud run services update-traffic ${_SERVICE} --region=${_REGION} --to-revisions="$$rev=100" --quiet
+        gcloud run services update-traffic ${_SERVICE} --region=${_REGION} --remove-tags="$$tag" --quiet
+        echo "promoted $$rev"
 
   - id: verify-live
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
@@ -79,6 +98,10 @@ steps:
       - -c
       - |
         set -euo pipefail
+        rev=$$(cat /workspace/candidate_revision)
+        serving=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format=json | python3 -c "import sys,json; print([ (x.get('revisionName'),x.get('percent')) for x in json.load(sys.stdin)['status']['traffic']])")
+        echo "traffic: $$serving"
+        echo "$$serving" | grep -q "('$$rev', 100)"
         url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
         TOKEN=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url") \
           bash scripts/check-ready.sh "$$url" "${_READY_PATH}" "${COMMIT_SHA}"
