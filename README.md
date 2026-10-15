@@ -9,7 +9,7 @@
 
 ## Known gaps
 
-- **AI re-review:** Gemini reviews a PR when it is opened. Pushes to an open PR do not trigger a new review; comment `/gemini review`.
+- **AI re-review:** Gemini reviews a PR when it is opened. The `Gemini re-review` workflow comments `/gemini review` on every push to an open, non-draft PR from this repository (not fork PRs). Gemini feedback is advisory and not a required check.
   Gemini feedback is advisory and not a required check.
 - **Human approval:** no required PR reviews or CODEOWNERS yet. Merging needs only green checks.
 - **Production deployment:** no deployment workflow, environments, or approval gates exist. Add protected environments with required reviewers before deploying.
