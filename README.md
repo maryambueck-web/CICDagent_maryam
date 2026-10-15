@@ -16,16 +16,27 @@ Tested on disposable PR #10 (https://github.com/maryambueck-web/CICDagent_maryam
 - **AI feedback is advisory.** Neither reviewer is a required check.
 - **Merge eligibility** is controlled by the required `tests`, `security` and `app-tests` checks.
 
-## Known gaps
+## Known gaps and limitations
 
-- **Gemini re-review on push:** not automatic. A workflow commenting `/gemini review` was tried and Gemini ignored comments posted by `github-actions[bot]`, so it was not adopted.
-- **Human approval:** not yet configured. There are no required PR reviews or CODEOWNERS; merging needs only green checks.
-- **Production deployment gates:** not yet configured. See "Production deployment (disabled)" below.
+- **Gemini re-review on push:** not automatic. Gemini reviews PR creation; Copilot handles automatic re-review of pushes. A workflow commenting `/gemini review` was tried and Gemini ignored comments posted by `github-actions[bot]`, so it was not adopted. Use the manual `/gemini review` comment.
+- **Human approval of PRs:** not configured. There are no required PR reviews or CODEOWNERS; merging needs only green checks.
+- **Deployment approver separation:** approval uses one account; two-person separation is not enforced. Approver IAM (`roles/cloudbuild.builds.approver` for approvers only) is not configured.
+- **Health verification happens after traffic switches:** the `/ready` check runs after `gcloud run deploy` has routed 100% of traffic to the new revision. Testing a candidate revision (`--no-traffic` plus a tagged URL) and promoting only on success is a planned improvement.
 - **Scanner limits:** zizmor runs with `online-audits: false`; the TruffleHog container image tag is not digest-pinned.
 
-## Production deployment (disabled)
+## Production deployment (demo pilot)
 
-- `.github/workflows/deploy.yml` is manual-only and its deploy job is guarded by the repo variable `DEPLOY_ENABLED` (unset, so it never runs). No GCP deployment credentials (Workload Identity pool, deploy service account) are provisioned.
-- GitHub's `production` environment cannot require reviewers on this private free-plan repo (the API rejects it), so human approval is planned through **Cloud Build approval** (or an eligible GitHub Enterprise/organization setup).
-- Verified on 2026-10-15 in the GCP project with a throwaway no-op manual trigger (`--require-approval`) running as a service account with no IAM roles. Before approval the build stayed `PENDING` with no start time and its step never ran. A rejected build ended `CANCELLED` and never started. After approval (REST `builds:approve`; this gcloud version has no `builds approve` command) the build started and succeeded. The trigger and service account were deleted afterwards.
-- Not yet done: a real deploy trigger, approver IAM (`roles/cloudbuild.builds.approver` for approvers only), and a non-self-approval policy (the test used a single account).
+Status: a **functioning demo pilot**. It deploys a sample app to a separate demo Cloud Run service, not to production.
+
+- **GitHub side stays disabled:** `.github/workflows/deploy.yml` is manual-only and guarded by the repo variable `DEPLOY_ENABLED` (unset). No GitHub-side GCP credentials exist.
+- **Why Cloud Build approval:** GitHub's `production` environment cannot require reviewers on this private free-plan repo (the API rejects it).
+- **Pipeline (`cloudbuild.yaml`):** private GitHub connection (Developer Connect) -> approval-required trigger on `main` -> app tests -> container build -> Artifact Registry (tagged with the commit SHA) -> Cloud Run (private, no unauthenticated access) -> authenticated `/ready` check requiring HTTP 200, the exact body `{"status":"ok"}` and the deployed commit SHA.
+- **Identities:** a dedicated deployer service account (log writer, Artifact Registry writer on one repo, `run.developer` and `run.invoker` on the demo service, `serviceAccountUser` on the runtime account) and a runtime service account with no roles.
+
+Evidence (project `project-cd16ff87-2947-4d1f-985`, us-east1):
+
+- **Rejection:** build `b81e5c74-70b7-403c-9340-379ef6b8da71` on `383e340` stayed `PENDING`, was rejected, ended `CANCELLED` and never started. Nothing was pushed or deployed; the service stayed on revision `00001`.
+- **Approval:** build `12d61fe7-1ea6-4350-8e5d-d061b9dad980` on merge commit `d8814bec1f9bdedba48b13e0db64980bfeb1efc2` (PR #14) was `PENDING` with no step started, then approved. Tests, build, push, deploy and the `/ready` check all succeeded. Revision `cicdagent-sample-demo-00004-vr9` is Ready with 100% of traffic on image tag `d8814bec...`.
+- **Earlier finding:** the first health check used `/healthz`, which Cloud Run's front end answers with its own 404 before the app sees it, so `/ready` is used instead (PR #14).
+
+Before company rollout: restrict approver and deployer permissions (approver role only for approvers, a second person for approval) and add tests tailored to each application.
