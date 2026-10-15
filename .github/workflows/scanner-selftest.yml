@@ -1,0 +1,148 @@
+name: Scanner self-test
+
+# Proves the pinned scanners in ci.yml fail on known-bad input and on scanner errors.
+# Fixtures are generated at runtime in the runner so no secret-like string is ever committed.
+# The synthetic token is random text with a GitHub-style prefix: it was never issued and cannot authenticate.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Generate fixtures
+        run: |
+          mkdir -p .selftest/bad/.github/workflows .selftest/clean/.github/workflows
+          {
+            printf '%s\n' 'name: bad' 'on: pull_request' 'permissions: {}' 'jobs:' '  x:' '    runs-on: ubuntu-latest' '    steps:'
+            printf '%s\n' "      - run: echo \"\$""{{ github.event.pull_request.title }}\""
+          } > .selftest/bad/.github/workflows/bad.yml
+          printf '%s\n' 'name: clean' 'on: workflow_dispatch' 'permissions: {}' 'jobs:' '  x:' '    runs-on: ubuntu-latest' '    steps:' '      - run: echo hello' \
+            > .selftest/clean/.github/workflows/clean.yml
+
+      - name: zizmor on workflow with template injection (must fail)
+        id: bad
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          annotations: true
+          online-audits: false
+          inputs: .selftest/bad
+
+      - name: zizmor on missing input path (scanner error, must fail)
+        id: error
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          annotations: true
+          online-audits: false
+          inputs: .selftest/does-not-exist
+
+      - name: zizmor on clean workflow (control, must pass)
+        id: clean
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          annotations: true
+          online-audits: false
+          inputs: .selftest/clean
+
+      - name: Assert expected outcomes
+        env:
+          BAD: ${{ steps.bad.outcome }}
+          ERROR: ${{ steps.error.outcome }}
+          CLEAN: ${{ steps.clean.outcome }}
+        run: |
+          printf 'bad=%s error=%s clean=%s\n' "${BAD}" "${ERROR}" "${CLEAN}"
+          test "${BAD}" = failure
+          test "${ERROR}" = failure
+          test "${CLEAN}" = success
+
+  trufflehog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build throwaway repositories
+        id: repos
+        env:
+          PREFIX: ghp_
+          BODY: aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5
+        run: |
+          git_commit() { git -c user.name=selftest -c user.email=selftest@example.invalid commit -q -m "$1"; }
+          for name in leak clean; do
+            dir="${RUNNER_TEMP}/th-${name}"
+            git init -q "${dir}"
+            (
+              cd "${dir}"
+              echo baseline > README.md
+              git add README.md
+              git_commit baseline
+              git rev-parse HEAD > "${RUNNER_TEMP}/th-${name}.base"
+              if [ "${name}" = leak ]; then
+                printf 'token = "%s%s"\n' "${PREFIX}" "${BODY}" > config.txt
+              else
+                echo "no secrets here" > notes.txt
+              fi
+              git add .
+              git_commit change
+              git rev-parse HEAD > "${RUNNER_TEMP}/th-${name}.head"
+            )
+            echo "${name}_base=$(cat "${RUNNER_TEMP}/th-${name}.base")" >> "${GITHUB_OUTPUT}"
+            echo "${name}_head=$(cat "${RUNNER_TEMP}/th-${name}.head")" >> "${GITHUB_OUTPUT}"
+          done
+
+      - name: TruffleHog on synthetic secret (must fail)
+        id: leak
+        continue-on-error: true
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
+        with:
+          version: 3.99.2
+          path: ${{ runner.temp }}/th-leak
+          base: ${{ steps.repos.outputs.leak_base }}
+          head: ${{ steps.repos.outputs.leak_head }}
+
+      - name: TruffleHog with invalid CLI flag (scanner error, must fail)
+        id: error
+        continue-on-error: true
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
+        with:
+          version: 3.99.2
+          path: ${{ runner.temp }}/th-clean
+          base: ${{ steps.repos.outputs.clean_base }}
+          head: ${{ steps.repos.outputs.clean_head }}
+          extra_args: --no-such-flag
+
+      - name: TruffleHog on clean change (control, must pass)
+        id: clean
+        continue-on-error: true
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
+        with:
+          version: 3.99.2
+          path: ${{ runner.temp }}/th-clean
+          base: ${{ steps.repos.outputs.clean_base }}
+          head: ${{ steps.repos.outputs.clean_head }}
+
+      - name: Assert expected outcomes
+        env:
+          LEAK: ${{ steps.leak.outcome }}
+          ERROR: ${{ steps.error.outcome }}
+          CLEAN: ${{ steps.clean.outcome }}
+        run: |
+          printf 'leak=%s error=%s clean=%s\n' "${LEAK}" "${ERROR}" "${CLEAN}"
+          test "${LEAK}" = failure
+          test "${ERROR}" = failure
+          test "${CLEAN}" = success
