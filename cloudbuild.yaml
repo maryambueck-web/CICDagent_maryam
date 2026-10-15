@@ -1,0 +1,61 @@
+# Production deployment pipeline. Runs only through an approval-required Cloud Build trigger on main,
+# as the dedicated deployer service account. Deploys the commit being built (COMMIT_SHA) to Cloud Run.
+substitutions:
+  _REGION: us-east1
+  _SERVICE: cicdagent-sample-demo
+  _DEPLOYER: cicd-deployer@${PROJECT_ID}.iam.gserviceaccount.com
+  _IMAGE: us-east1-docker.pkg.dev/${PROJECT_ID}/cicdagent-images/sample
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: test
+    name: node:22-slim
+    dir: app
+    entrypoint: npm
+    args: ["test"]
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}:${COMMIT_SHA}", "app"]
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "${_IMAGE}:${COMMIT_SHA}"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_IMAGE}:${COMMIT_SHA}
+      - --region=${_REGION}
+      - --set-env-vars=APP_VERSION=${COMMIT_SHA}
+      - --no-allow-unauthenticated
+      - --quiet
+
+  - id: health-check
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
+        token=$$(gcloud auth print-identity-token --impersonate-service-account=${_DEPLOYER} --audiences="$$url")
+        for i in 1 2 3 4 5 6; do
+          code=$$(curl -s -o /tmp/ready.body -w '%{http_code}' -H "Authorization: Bearer $$token" "$$url/ready" || true)
+          if [ "$$code" = 200 ] && [ "$$(cat /tmp/ready.body)" = '{"status":"ok"}' ]; then
+            echo "ready ok"
+            curl -sf -H "Authorization: Bearer $$token" "$$url/" | grep -q "\"version\":\"${COMMIT_SHA}\""
+            echo "version ${COMMIT_SHA} confirmed"
+            exit 0
+          fi
+          echo "attempt $$i: status=$$code body=$$(head -c 80 /tmp/ready.body)" >&2
+          sleep 5
+        done
+        echo "readiness check failed" >&2
+        exit 1
