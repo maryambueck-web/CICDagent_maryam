@@ -1,8 +1,8 @@
 name: Deploy to production
 
-# Manual trigger only until the `production` environment has Required reviewers
-# (needs a public repo or a paid GitHub plan). Do not add push triggers before that:
-# without the reviewer rule the deploy job would run with no human approval.
+# Disabled by default (see the DEPLOY_ENABLED guard on the deploy job). Manual trigger only until
+# a human approval gate exists for production. Do not add push triggers before that:
+# the GitHub `production` environment cannot require reviewers on this private plan.
 
 on:
   workflow_dispatch:
@@ -33,7 +33,10 @@ jobs:
 
   deploy:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    # Disabled: runs only when the repo variable DEPLOY_ENABLED is "true". Leave it unset
+    # until an approval gate exists (Cloud Build approval or an eligible GitHub environment)
+    # and GCP deployment credentials have been provisioned.
+    if: vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
