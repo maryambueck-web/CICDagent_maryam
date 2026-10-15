@@ -1,6 +1,10 @@
 const http = require("node:http");
 
 function handler(req, res) {
+  if (req.url === "/ready") {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ status: "ok" }));
+  }
   if (req.url === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain" });
     return res.end("ok");

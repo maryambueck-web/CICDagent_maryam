@@ -46,13 +46,15 @@ steps:
         url=$$(gcloud run services describe ${_SERVICE} --region=${_REGION} --format='value(status.url)')
         token=$$(gcloud auth print-identity-token --audiences="$$url")
         for i in 1 2 3 4 5 6; do
-          if [ "$$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$token" "$$url/healthz")" = 200 ]; then
-            body=$$(curl -s -H "Authorization: Bearer $$token" "$$url/")
-            echo "$$body"
-            echo "$$body" | grep -q "\"version\":\"${COMMIT_SHA}\""
+          code=$$(curl -s -o /tmp/ready.body -w '%{http_code}' -H "Authorization: Bearer $$token" "$$url/ready" || true)
+          if [ "$$code" = 200 ] && [ "$$(cat /tmp/ready.body)" = '{"status":"ok"}' ]; then
+            echo "ready ok"
+            curl -sf -H "Authorization: Bearer $$token" "$$url/" | grep -q "\"version\":\"${COMMIT_SHA}\""
+            echo "version ${COMMIT_SHA} confirmed"
             exit 0
           fi
+          echo "attempt $$i: status=$$code body=$$(head -c 80 /tmp/ready.body)" >&2
           sleep 5
         done
-        echo "health check failed" >&2
+        echo "readiness check failed" >&2
         exit 1
