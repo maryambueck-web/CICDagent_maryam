@@ -21,7 +21,7 @@ Tested on disposable PR #10 (PR #10, closed unmerged): both reviewers reviewed t
 - **Gemini re-review on push:** not automatic. Gemini reviews PR creation; Copilot handles automatic re-review of pushes. A workflow commenting `/gemini review` was tried and Gemini ignored comments posted by `github-actions[bot]`, so it was not adopted. Use the manual `/gemini review` comment.
 - **Human approval of PRs:** not configured. There are no required PR reviews or CODEOWNERS; merging needs only green checks.
 - **Approver separation:** the deployer service account cannot approve builds (enforced and tested, see evidence). In this one-person demo the human approver is still the project owner, so two-person separation is not enforced. For a company, grant `roles/cloudbuild.builds.approver` to a dedicated group such as `release-approvers@<company-domain>` and keep the approvers distinct from the people who merge.
-- **Candidate cleanup and scanning:** after a failed candidate the zero-traffic `candidate`-tagged revision remains until the next deploy moves the tag. Container-image vulnerability scanning (for example Artifact Registry scanning) is not enabled; application scanning is `npm audit` (high or critical fails) plus the existing zizmor and TruffleHog scanners.
+- **Candidate cleanup and scanning:** a failed candidate leaves a zero-traffic revision behind with its build-specific tag (`c` plus 12 characters of the build ID); tags are not cleaned up automatically. Container-image vulnerability scanning (for example Artifact Registry scanning) is not enabled; application scanning is `npm audit` (high or critical fails) plus the existing zizmor and TruffleHog scanners.
 - **Scanner limits:** zizmor runs with `online-audits: false`; the TruffleHog container image tag is not digest-pinned.
 
 ## Production deployment (demo pilot)
@@ -29,10 +29,21 @@ Tested on disposable PR #10 (PR #10, closed unmerged): both reviewers reviewed t
 Status: a **functioning demo pilot**. It deploys a sample app to a separate demo Cloud Run service, not to production.
 
 - **GitHub side stays disabled:** `.github/workflows/deploy.yml` is manual-only and guarded by the repo variable `DEPLOY_ENABLED` (unset). No GitHub-side GCP credentials exist.
-- **Adapting it:** all names are Cloud Build substitutions in `cloudbuild.yaml` (`_REGION`, `_SERVICE`, `_DEPLOYER`, `_IMAGE`, `_READY_PATH`); override them on the trigger. The GitHub deploy workflow reads `GCP_CLOUD_RUN_SERVICE`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT` from repo variables and stays disabled until `DEPLOY_ENABLED` is `true`.
+- **Adapting it:** all names are Cloud Build substitutions in `cloudbuild.yaml` (`_REGION`, `_SERVICE`, `_DEPLOYER`, `_RUNTIME`, `_IMAGE`, `_READY_PATH`); override them on the trigger. The GitHub deploy workflow reads `GCP_CLOUD_RUN_SERVICE`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT` from repo variables and stays disabled until `DEPLOY_ENABLED` is `true`.
 - **Why Cloud Build approval:** GitHub's `production` environment cannot require reviewers on this private free-plan repo (the API rejects it).
-- **Pipeline (`cloudbuild.yaml`):** private GitHub connection (Developer Connect) -> approval-required trigger on `main` -> app tests -> `npm audit` -> container build -> Artifact Registry (tagged with the commit SHA) -> Cloud Run **candidate** revision (`--no-traffic`, tagged `candidate`, private) -> authenticated check of the candidate's tagged URL (`/ready` returns 200 with exactly `{"status":"ok"}`, and `/` reports a version equal to the commit SHA) -> promote to 100% only if that passes -> same check on the live service. `scripts/check-ready.sh` is the shared check and is itself tested.
+- **Pipeline (`cloudbuild.yaml`):** private GitHub connection (Developer Connect) -> approval-required trigger on `main` -> app tests -> `npm audit` -> container build -> Artifact Registry (tagged with the commit SHA) -> Cloud Run **candidate** revision (`--no-traffic`, explicit runtime service account, unique per-build tag, private) -> verify the revision runs the digest of the image built from this commit -> authenticated check of the candidate's tagged URL (`/ready` returns 200 with exactly `{"status":"ok"}`, and `/` reports a version equal to the commit SHA) -> promote that exact verified revision (`--to-revisions=<revision>=100`, never `latest`) and remove its tag only if that passes -> same check on the live service. `scripts/check-ready.sh` is the shared check and is itself tested.
 - **Identities:** a dedicated deployer service account (for example `cicd-deployer`; log writer, Artifact Registry writer on one repo, `run.developer` and `run.invoker` on the demo service, `serviceAccountUser` on the runtime account) and a runtime service account with no roles.
+
+### Company rollout (project `cicdagent`, europe-west1): **pending, nothing deployed**
+
+Done: Developer Connect API enabled; the IAM script and a disabled trigger template are prepared (`scripts/company-iam-setup.sh`, `scripts/company-trigger.example.json`). Not done, and each needs a person with the right authority:
+
+1. The project owner (`tech@researchpreneurs.com`) reviews, then runs the script stages `bootstrap`, `grants` and `approvers`. The approver must be a named authorized person or an existing release-approver group; the deployer is never granted approval rights.
+2. A `ResPRs` GitHub organization administrator authorizes the repository connection.
+3. `connection-token` stays unexecuted until the connection method is confirmed and its conditional IAM binding is verified to grant the intended access. Connections have no resource-level IAM, so the grant is project-wide with a condition.
+4. The approval-required staging trigger is created **disabled**, validated, and enabled only for rejection and approval tests.
+
+The company pipeline has not been run; the evidence below comes from the personal demo project.
 
 Evidence from the demo run (build IDs, commits, revisions and the project it ran in) is recorded in [docs/demo-evidence.md](docs/demo-evidence.md). Summary: a rejected build never started; an approved build deployed a no-traffic candidate, verified it, then promoted it; a failing candidate was not promoted; and the deployer identity could not approve builds.
 

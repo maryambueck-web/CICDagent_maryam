@@ -109,3 +109,8 @@ test("check-ready.sh passes for the right version and fails for a wrong version 
     await new Promise((r) => server.close(r));
   }
 });
+
+test("a malformed request target returns 400 instead of crashing", async () => {
+  const r = await getRaw("//[");
+  assert.strictEqual(r.status, 400);
+});
