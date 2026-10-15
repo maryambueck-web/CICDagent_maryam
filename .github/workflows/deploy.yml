@@ -1,0 +1,62 @@
+name: Deploy to production
+
+# Disabled by default (see the DEPLOY_ENABLED guard on the deploy job). Manual trigger only until
+# a human approval gate exists for production. Do not add push triggers before that:
+# the GitHub `production` environment cannot require reviewers on this private plan.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Run application tests
+        working-directory: app
+        run: npm test
+
+  deploy:
+    needs: test
+    # Disabled: runs only when the repo variable DEPLOY_ENABLED is "true". Leave it unset
+    # until an approval gate exists (Cloud Build approval or an eligible GitHub environment)
+    # and GCP deployment credentials have been provisioned.
+    if: vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Authenticate to Google Cloud (keyless)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3
+        with:
+          service: cicdagent-sample
+          region: us-east1
+          source: ./app
+          env_vars: APP_VERSION=${{ github.sha }}
