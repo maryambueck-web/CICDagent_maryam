@@ -56,7 +56,7 @@ jobs:
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3
         with:
-          service: cicdagent-sample
-          region: us-east1
+          service: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+          region: ${{ vars.GCP_REGION }}
           source: ./app
           env_vars: APP_VERSION=${{ github.sha }}
